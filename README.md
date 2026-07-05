@@ -97,7 +97,7 @@ Crone and every engine allocate from the bottom, so top-of-range indices never c
 | Parameter | Default | Range / Options |
 |-----------|---------|-----------------|
 | **Medium** | Chip | BBD / Cassette / CD / Chip / Tape / Vinyl |
-| **Imprint** | 50 % | 0–100 % |
+| **Imprint** | 10 % | 0–100 % |
 | **Wear** | 5 % | 0–100 % |
 | **M: BBD Tone** | Bright | Bright / Dark |
 | **M: Cassette Wow** | 5 % | 0–100 % |
