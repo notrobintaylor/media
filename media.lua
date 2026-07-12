@@ -16,6 +16,7 @@ local looper_ui      = include("lib/looper_ui")
 local lfo            = include("lib/lfo")
 local env            = include("lib/env")
 local trigs          = include("lib/trigger")
+local seq            = include("lib/seq")
 
 local B = { DIM=0, MED=5, FULL=15 }
 
@@ -48,6 +49,10 @@ local TRIG_TARGETS = (function()
   for i = 1, lfo.NUM do
     t[#t + 1] = { label = "LFO " .. i .. ": Randomize", id = "trig_lfo" .. i .. "_randomize", lfo_idx = i,
                   action = function() params:set("lfo" .. i .. "_randomize", 1) end }
+  end
+  for i = 1, seq.NUM do
+    t[#t + 1] = { label = "Walk " .. i .. ": Randomize", id = "trig_seq" .. i .. "_randomize",
+                  action = function() params:set("seq" .. i .. "_randomize", 1) end }
   end
   return t
 end)()
@@ -102,6 +107,14 @@ for i = 1, lfo.NUM do
   TARGET_PARAMS[#TARGET_PARAMS+1] = {label="LFO "..i..": Sync Feel", id="lfo"..i.."_sync_feel", mn=1, mx=3,   st=1,   send=function(v) lfo.mod.sync_feel[i] = math.floor(v + 0.5) end}
 end
 
+for i = 1, seq.NUM do
+  TARGET_PARAMS[#TARGET_PARAMS+1] = {label="Walk "..i..": Rate",      id="seq"..i.."_rate",      mn=0.1, mx=25,  st=0.1, send=function(v) seq.mod.rate[i]      = v end}
+  TARGET_PARAMS[#TARGET_PARAMS+1] = {label="Walk "..i..": Steps",     id="seq"..i.."_steps",     mn=2,   mx=16,  st=1,   send=function(v) seq.mod.steps[i]     = math.floor(v + 0.5) end}
+  TARGET_PARAMS[#TARGET_PARAMS+1] = {label="Walk "..i..": Rate Slew", id="seq"..i.."_rate_slew", mn=0,   mx=5,   st=0.1, send=function(v) seq.mod.rate_slew[i] = v end}
+  TARGET_PARAMS[#TARGET_PARAMS+1] = {label="Walk "..i..": Sync Div",  id="seq"..i.."_sync_div",  mn=2,   mx=8,   st=1,   send=function(v) seq.mod.sync_div[i]  = math.floor(v + 0.5) end}
+  TARGET_PARAMS[#TARGET_PARAMS+1] = {label="Walk "..i..": Sync Feel", id="seq"..i.."_sync_feel", mn=1,   mx=3,   st=1,   send=function(v) seq.mod.sync_feel[i] = math.floor(v + 0.5) end}
+end
+
 for i = 1, trigs.N do
   TARGET_PARAMS[#TARGET_PARAMS+1] = {label="Trigger "..i..": Rate",        id="trig"..i.."_rate",        mn=0.1, mx=25,  st=0.1, send=function(v) trigs.mod.rate[i]        = v end}
   TARGET_PARAMS[#TARGET_PARAMS+1] = {label="Trigger "..i..": Probability", id="trig"..i.."_probability", mn=0,   mx=100, st=1,   send=function(v) trigs.mod.probability[i] = v end}
@@ -135,6 +148,7 @@ local view           = 0   -- 0 = looper pane, 1 = mod rack
 local rack_pane      = 1
 local RACK           = {}   -- data-driven source list: {kind=..., idx=...}
 local rack_strip_sel = {}   -- per-source strip selection (keyed for lfo by lfo idx)
+local seq_strip_sel  = {}   -- per-Walk strip selection
 
 -- ── Value formatting ─────────────────────────────────────────
 local function fmt_unit(v, p)
@@ -366,12 +380,31 @@ local function draw_rack_pane()
     local id        = "trig" .. idx .. ts.suf
     local v1        = ts.fmt(params:get(id), idx)
     draw_strip("Trigger " .. idx, ts.name, v1, B.FULL)
+  elseif src.kind == "seq" then
+    local idx       = src.idx
+    local strip_idx = seq.strip_resolve(idx, seq_strip_sel[idx] or 1)
+    local ss        = seq.STRIP[strip_idx]
+    local sel_step  = ss.suf:match("^_step_(%d+)$")
+    sel_step = sel_step and tonumber(sel_step) or nil
+    local seq_l = src_l and src_l.idx
+    local seq_r = src_r and src_r.idx
+    if seq_l then seq.draw_half(OX1, py, seq_l, is_left,     is_left and sel_step or nil) end
+    if seq_r then seq.draw_half(OX2, py, seq_r, not is_left, (not is_left) and sel_step or nil) end
+    local id  = "seq" .. idx .. ss.suf
+    local v1  = ss.fmt(params:get(id), idx)
+    local v2  = nil
+    if ss.suf == "_target_param" then
+      local sp = v1:find(" ")
+      if sp then v1, v2 = v1:sub(1, sp - 1), v1:sub(sp + 1) end
+    end
+    draw_strip("Walk " .. idx, ss.name, v1, B.FULL, v2)
   end
 
   local cur_cx = (is_left and OX1 or OX2) + 16
   local cur_label
   if     src.kind == "env"  then cur_label = "Sense " .. src.idx
   elseif src.kind == "trig" then cur_label = "Trig "  .. src.idx
+  elseif src.kind == "seq"  then cur_label = "Walk "  .. src.idx
   else                           cur_label = "LFO "   .. src.idx end
   draw_label_cursor(cur_cx, py + 56, cur_label)
   screen.update()
@@ -448,6 +481,25 @@ function enc(n, d)
         if ts.suf == "_sync_div" then trigs.fn.start_clock(idx) end
         redraw()
       end
+    elseif src.kind == "seq" then
+      local idx = src.idx
+      if n == 2 then
+        seq_strip_sel[idx] = seq.strip_advance(idx, seq_strip_sel[idx] or 1, d)
+        redraw()
+      elseif n == 3 then
+        local ss = seq.STRIP[seq.strip_resolve(idx, seq_strip_sel[idx] or 1)]
+        local id = "seq" .. idx .. ss.suf
+        if ss.typ == "opt" then
+          local nmax = ss.nmax_fn and ss.nmax_fn(idx) or ss.nmax
+          if nmax > 0 then
+            params:set(id, util.clamp(params:get(id) + d, 1, nmax))
+          end
+        else
+          params:set(id, snap_val(params:get(id) + d * ss.step, ss.step))
+        end
+        if ss.suf == "_sync_div" then seq.start_clock(idx) end
+        redraw()
+      end
     end
     return
   end
@@ -461,7 +513,8 @@ function key(n, z)
     long_press("k2", z, function() end, function()
       if view == 1 then
         local src = RACK[rack_pane]
-        if src.kind == "lfo" then params:set("lfo" .. src.idx .. "_randomize", 1) end
+        if src.kind == "lfo" then params:set("lfo" .. src.idx .. "_randomize", 1)
+        elseif src.kind == "seq" then params:set("seq" .. src.idx .. "_randomize", 1) end
       else
         looper.stop_clear()
       end
@@ -479,6 +532,9 @@ function key(n, z)
         elseif src.kind == "trig" then
           local cur = params:get("trig" .. src.idx .. "_enable")
           params:set("trig" .. src.idx .. "_enable", 3 - cur)
+        elseif src.kind == "seq" then
+          local cur = params:get("seq" .. src.idx .. "_enable")
+          params:set("seq" .. src.idx .. "_enable", 3 - cur)
         end
       else
         looper.step()
@@ -923,7 +979,7 @@ function init()
       end
     end,
     get_trigs_mod    = function() return trigs.mod end,
-    on_target_change = function() env.rebuild_all_target_dropdowns() end,
+    on_target_change = function() env.rebuild_all_target_dropdowns(); seq.rebuild_all_target_dropdowns() end,
   })
 
   env.init({
@@ -936,6 +992,7 @@ function init()
     is_pane_visible_l = function() return view == 1 and rack_pane == 1 end,
     is_pane_visible_r = function() return view == 1 and rack_pane == 2 end,
     redraw_pane       = function() if not initing then redraw() end end,
+    on_target_change  = function() seq.rebuild_all_target_dropdowns() end,
   })
 
   trigs.init({
@@ -944,6 +1001,21 @@ function init()
     targets          = TRIG_TARGETS,
     is_initing       = function() return initing end,
     is_clock_running = function() return clock_running end,
+  })
+  seq.init({
+    TARGET_PARAMS    = TARGET_PARAMS,
+    DEVICE_NAMES     = DEVICE_NAMES,
+    DEVICE_PARAMS    = DEVICE_PARAMS,
+    TARGET_DEVICE_OF = TARGET_DEVICE_OF,
+    lfo              = lfo,
+    is_clock_running = function() return clock_running end,
+    is_initing       = function() return initing end,
+    on_target_change = function()
+      for i = 1, lfo.NUM do lfo.rebuild_target_dropdown(i) end
+      env.rebuild_all_target_dropdowns()
+    end,
+    is_pane_visible  = function() return view == 1 and RACK[rack_pane] and RACK[rack_pane].kind == "seq" end,
+    redraw_pane      = function() if not initing then redraw() end end,
   })
   looper_ui.init({
     draw_strip      = draw_strip,
@@ -979,8 +1051,159 @@ function init()
   })
 
   -- mod rack groups, in rack order: Sense, LFO, Trigger
+  local function register_seq(idx)
+    local prefix = "seq" .. idx
+
+    local function refresh_visibility()
+      local div = params:get(prefix .. "_sync_div")
+      local n   = params:get(prefix .. "_steps")
+      if div > 1 then params:hide(prefix .. "_rate") else params:show(prefix .. "_rate") end
+      for k = 1, seq.MAX_STEPS do
+        if k <= n then params:show(prefix .. "_step_" .. k) else params:hide(prefix .. "_step_" .. k) end
+      end
+      if _menu and _menu.rebuild_params then _menu.rebuild_params() end
+    end
+
+    local function compute_intended_global()
+      local dev_filtered = params:get(prefix .. "_target_device")
+      local dev_idx = (seq.target_device_filter[idx] and seq.target_device_filter[idx][dev_filtered]) or 1
+      local param_filtered = params:get(prefix .. "_target_param")
+      local g = (seq.target_param_filter[idx] and seq.target_param_filter[idx][param_filtered]) or 1
+      if g <= 1 and DEVICE_PARAMS[dev_idx] and DEVICE_PARAMS[dev_idx][1] then
+        g = DEVICE_PARAMS[dev_idx][1].global_idx
+      end
+      return g
+    end
+
+    params:add_group("MOD WALK " .. idx, 29)
+    params:add_separator(prefix .. "_sep_control", "─── Control ───")
+
+    params:add_option(prefix .. "_enable", "Enable", {"Off", "On"}, 1)
+    params:set_action(prefix .. "_enable", function(v)
+      if not initing then
+        if v == 2 then
+          local g = compute_intended_global()
+          local own = g > 1 and lfo.target_owner[TARGET_PARAMS[g].id]
+          if own and own ~= "seq_" .. idx then
+            for i = 2, #TARGET_PARAMS do
+              if not lfo.target_owner[TARGET_PARAMS[i].id] then g = i; break end
+            end
+          end
+          seq.set_target(idx, g)
+        else
+          seq.set_target(idx, seq.last_global[idx] or 1)
+        end
+      end
+      re()
+    end)
+
+    params:add_number(prefix .. "_steps", "Steps", 2, 16, 16)
+    params:set_action(prefix .. "_steps", function(v)
+      seq.mod.steps[idx] = nil
+      lfo.target_base[prefix .. "_steps"] = nil
+      local s = seq.state[idx]
+      if s and s.step_pos > v then s.step_pos = ((s.step_pos - 1) % v) + 1 end
+      refresh_visibility()
+      re()
+    end)
+
+    for k = 1, seq.MAX_STEPS do
+      params:add_control(prefix .. "_step_" .. k, "Step " .. k, controlspec.new(-100, 100, "lin", 1, 0, "%"))
+    end
+
+    params:add_control(prefix .. "_rate", "Rate", controlspec.new(0.1, 25, "exp", 0.1, 1.0, "Hz"))
+    params:set_action(prefix .. "_rate", function(_)
+      seq.mod.rate[idx] = nil
+      lfo.target_base[prefix .. "_rate"] = nil
+    end)
+
+    params:add_control(prefix .. "_rate_slew", "Rate Slew", controlspec.new(0, 5, "lin", 0.1, 0, "s"))
+    params:set_action(prefix .. "_rate_slew", function(_)
+      seq.mod.rate_slew[idx] = nil
+      lfo.target_base[prefix .. "_rate_slew"] = nil
+    end)
+
+    params:add_separator(prefix .. "_sep_sync", "─── Synchronization ───")
+
+    params:add_option(prefix .. "_sync_div", "Sync", sync.DIV_OPTS, 1)
+    params:set_action(prefix .. "_sync_div", function(_)
+      seq.mod.sync_div[idx] = nil
+      lfo.target_base[prefix .. "_sync_div"] = nil
+      refresh_visibility()
+      if not initing then
+        seq.refresh_dropdowns_for_device("Walk " .. idx)
+        seq.start_clock(idx)
+      end
+    end)
+
+    params:add_option(prefix .. "_sync_feel", "Sync Feel", sync.FEEL_OPTS, 1)
+    params:set_action(prefix .. "_sync_feel", function(_)
+      seq.mod.sync_feel[idx] = nil
+      lfo.target_base[prefix .. "_sync_feel"] = nil
+    end)
+
+    params:add_separator(prefix .. "_sep_target", "─── Target ───")
+
+    params:add_option(prefix .. "_target_device", "Target Device", {"-"}, 1)
+    params:set_action(prefix .. "_target_device", function(filtered_v)
+      if not initing then
+        local cur_global = seq.last_global[idx] or 1
+        local cur_dev = TARGET_DEVICE_OF[cur_global] or 0
+        local dmap = seq.target_device_filter[idx]
+        local cur_filtered = find_filtered_idx(dmap, cur_dev)
+        if not params.pset_loading then
+          if filtered_v > cur_filtered + 1 then filtered_v = cur_filtered + 1
+          elseif filtered_v < cur_filtered - 1 then filtered_v = cur_filtered - 1 end
+        end
+        local new_dev = (dmap and dmap[filtered_v]) or 1
+        if new_dev ~= cur_dev or params.pset_loading then
+          seq.rebuild_target_param_dropdown(idx, new_dev)
+          local new_global = 1
+          if DEVICE_PARAMS[new_dev] then
+            for _, entry in ipairs(DEVICE_PARAMS[new_dev]) do
+              local owner = lfo.target_owner[TARGET_PARAMS[entry.global_idx].id]
+              if owner == nil or owner == "seq_" .. idx then new_global = entry.global_idx; break end
+            end
+          end
+          seq.set_target(idx, new_global)
+        else
+          ui_revert(prefix .. "_target_device", cur_filtered)
+        end
+      end
+      re()
+    end)
+
+    params:add_option(prefix .. "_target_param", "Target Param", {"-"}, 1)
+    params:set_action(prefix .. "_target_param", function(filtered_v)
+      if not initing then
+        local cur_global = seq.last_global[idx] or 1
+        local pmap = seq.target_param_filter[idx]
+        local cur_filtered = find_filtered_idx(pmap, cur_global)
+        if not params.pset_loading then
+          if filtered_v > cur_filtered + 1 then filtered_v = cur_filtered + 1
+          elseif filtered_v < cur_filtered - 1 then filtered_v = cur_filtered - 1 end
+        end
+        local new_global = (pmap and pmap[filtered_v]) or 1
+        if new_global ~= cur_global then
+          seq.set_target(idx, new_global)
+        else
+          ui_revert(prefix .. "_target_param", cur_filtered)
+        end
+      end
+      re()
+    end)
+
+    params:add_separator(prefix .. "_sep_trigger", "─── Trigger ───")
+
+    params:add_binary(prefix .. "_randomize", "Randomize", "trigger", 0)
+    params:set_action(prefix .. "_randomize", function(v)
+      if v == 1 and not initing then seq.randomize(idx) end
+    end)
+  end
+
   for i = 1, env.NUM do register_env(i) end
   for i = 1, lfo.NUM do register_lfo(i) end
+  for i = 1, seq.NUM do register_seq(i) end
   for i = 1, trigs.N do register_trigger(i) end
 
   -- ── Mod-source action wrapper ──────────────────────────────
@@ -1020,6 +1243,7 @@ function init()
   -- ── Build mod-rack source list (2 Sense, then 8 LFO, then 4 trigger) ──
   for i = 1, env.NUM do RACK[#RACK + 1] = { kind = "env", idx = i } end
   for i = 1, lfo.NUM do RACK[#RACK + 1] = { kind = "lfo", idx = i } end
+  for i = 1, seq.NUM do RACK[#RACK + 1] = { kind = "seq", idx = i } end
   for i = 1, trigs.N do RACK[#RACK + 1] = { kind = "trig", idx = i } end
 
   setup_clock_watchers()

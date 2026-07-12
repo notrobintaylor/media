@@ -25,20 +25,20 @@ The live input never passes through the engine: Norns monitors it straight to th
 
 ## Controls
 
-media has two views, toggled by holding K1. The **Looper view** shows the looper sprite; the **Mod Rack view** shows the LFO, Sense, and Trigger panes.
+media has two views, toggled by holding K1. The **Looper view** shows the looper sprite; the **Mod Rack view** shows the LFO, Sense, Walk, and Trigger panes.
 
 | Control | Function |
 |---------|----------|
-| **E1** | Looper view: unused. Mod Rack view: move between rack panes (Sense / LFOs / Triggers) |
+| **E1** | Looper view: unused. Mod Rack view: move between rack panes (Sense / LFOs / Walks / Triggers) |
 | **E2** | Looper view: select looper parameter. Mod Rack view: scroll the focused source's parameter strip |
 | **E3** | Change the selected value |
 | **K1 hold 2s** | Toggle between the Looper view and the Mod Rack view |
-| **K2** | Looper view: stop → clear. Mod Rack view: randomise the focused LFO (Stepped Random) |
+| **K2** | Looper view: stop → clear. Mod Rack view: randomise the focused LFO's register, or a Walk's steps |
 | **K3** | Looper view: record → play → dub → play. Mod Rack view: toggle the focused source on or off |
 
 In the **Looper view**, E2 scrolls the nine strip parameters (Medium, Wear, Direction, Rec / Play / Fade Level, Speed, Quantize, Quantize Feel) and E3 changes the selected one. A small Quant LED in the panel pulses on every Quant subdivision when the Norns clock is running. K2 and K3 keep their transport behaviour here, so you can punch a loop in or out without leaving the sprite.
 
-In the **Mod Rack view**, E1 moves between panes: the first pair shows Sense 1 and Sense 2; the next four pairs show LFO 1/2, 3/4, 5/6, and 7/8; the final two pairs show Trigger 1/2 and Trigger 3/4. E2 scrolls the parameter strip for the focused half; E3 changes the value. Short-press K2 on an LFO pane randomises the focused LFO's Stepped Random register. Short-press K3 toggles the focused source on or off. The key holds (K2, K3) do nothing here; K1 hold returns to the Looper view.
+In the **Mod Rack view**, E1 moves between panes: the first pair shows Sense 1 and Sense 2; the next four pairs show LFO 1/2, 3/4, 5/6, and 7/8; one pair shows Walk 1 and Walk 2; the final two pairs show Trigger 1/2 and Trigger 3/4. E2 scrolls the parameter strip for the focused half; E3 changes the value. Short-press K2 on an LFO pane randomises the focused LFO's Stepped Random register, and on a Walk pane rolls fresh values into its steps. Short-press K3 toggles the focused source on or off. The key holds (K2, K3) do nothing here; K1 hold returns to the Looper view.
 
 ## Parameters
 
@@ -187,6 +187,33 @@ Eight LFOs, each with the following parameters:
 **Target Device** and **Target Param** select what the LFO modulates. The device list is **Looper**, **LFO 1–8**, and **Trigger 1–4**. The Looper device exposes its Rec / Play / Fade levels, Speed, Imprint, Wear, the Cassette Wow / CD Errors / Chip Crush / Tape Wow character controls, and the Quantize division and feel. LFOs can target other LFOs' Rate, Depth, Phase, Steps, Stability, Rate Slew, Sync Division and Sync Feel, and the Triggers' Rate and Probability; routing LFO A into LFO B's rate while LFO B modulates the looper creates compound motion.
 
 The target list adapts to the state of the destination. For another LFO, only the parameters relevant to its current waveform appear: Phase and Rate Slew on the periodic and smooth-random shapes, Steps and Stability on Stepped Random. Rate is hidden once the destination is synced. Sync Division and Sync Feel are exposed as targets only when sync is already active on the destination, so modulation reshapes a sync grid you have already chosen rather than switching sync on or off. A Sync or Quant target can never be moved to **Off** by modulation; only a manual edit can. If a destination changes in a way that retires the current target, the LFO falls back to the first parameter still available.
+
+### Walk
+
+Two step sequencers (the **Walk** modules), each stepping through up to sixteen values and driving a chosen continuous parameter. Each has the following parameters:
+
+| Parameter | Default | Range / Options |
+|-----------|---------|-----------------|
+| **Enable** | Off | Off / On |
+| **Steps** | 16 | 2–16 |
+| **Step 1 … Step 16** | 0 % | −100 – +100 % |
+| **Rate** | 1.0 Hz | 0.1–25 Hz (exp) |
+| **Sync** | Off | Off / 1/1 / 1/2 / 1/4 / 1/8 / 1/16 / 1/32 / 1/64 |
+| **Sync Feel** | Note | Note / Dotted / Triplet (when Sync is active) |
+| **Rate Slew** | 0 s | 0–5 s |
+| **Target Device** | - | device group |
+| **Target Param** | - | parameter within device |
+| **Randomize** | - | trigger |
+
+A Walk steps through its values in order at **Rate**, or locked to the Norns clock when **Sync** is set to a division, looping back to the first step after the last active one. **Steps** sets how many of the sixteen are used; the rest are skipped, and in the Mod Rack view their knobs simply disappear while the used ones stay in place.
+
+Each step is a bipolar amount from **−100 %** to **+100 %**, applied relative to the target parameter's current base value: **0 %** leaves the target untouched, **+100 %** drives it to its maximum, **−100 %** to its minimum. The scaling is asymmetric by design, so ±100 % always lands exactly on the rail wherever the base sits.
+
+**Rate Slew** smooths the jump between consecutive step values, gliding instead of hard-stepping. **Randomize** rolls fresh random values into all active steps; it is a trigger in PARAMS and MAP, and short-press **K2** on the Walk's pane does the same.
+
+**Target Device** and **Target Param** pick what the Walk drives, from the same pool the LFOs and Sense modules use (the looper parameters plus the mod sources' own controls), minus parameters already claimed by another source. The ownership pool is shared: a target belongs to at most one LFO, Sense or Walk at a time. A Walk can also target another Walk's Rate, Steps, Rate Slew, Sync Division and Sync Feel; the two appear in every source's device list as `Walk 1` and `Walk 2`, and triggers can fire `Walk N: Randomize`. As with every device, Sync Division and Sync Feel are modulation targets only once the Walk's own Sync is on.
+
+In the Mod Rack view, the Walk pane shows its steps as a grid of knobs. The playing step lights up as a running light; a small dot marks the step selected for editing (E2 scrolls to a step, E3 sets its value). Short-press **K3** toggles the Walk on or off.
 
 ### Triggers
 
