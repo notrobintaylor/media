@@ -10,7 +10,9 @@ local initing = true
 local cabinet        = include("lib/cabinet")
 local sync           = include("lib/sync")
 local sprites_looper = include("lib/sprites_looper")
+local sprites_looper_b = include("lib/sprites_looper_b")
 local looper         = include("lib/looper")
+local looper_a, looper_b
 local looper_params  = include("lib/looper_params")
 local looper_ui      = include("lib/looper_ui")
 local lfo            = include("lib/lfo")
@@ -28,9 +30,22 @@ local LOOPER_DEF = {
   { id="looper_level",      name="Play Level", default=-2.5, min=-40, max=0, step=0.5, db=true, cat="Looper"  },
   { id="looper_fade_level", name="Fade Level", default=-2.5, min=-40, max=0, step=0.5, db=true, cat="Looper"  },
   { id="looper_speed",      name="Speed",      default=0,   min=-100, max=100, step=1, db=false, cat="Looper"  },
-  { id="looper_quant_div",  name="Quantize",      default=1,   min=1, max=8, step=1, db=false, cat="Looper", options={"Off","1/1","1/2","1/4","1/8","1/16","1/32","1/64"} },
-  { id="looper_quant_feel", name="Quantize Feel", default=1,   min=1, max=3, step=1, db=false, cat="Looper", options={"Note","Dotted","Triplet"} },
+  { id="looper_quant_div",  name="Quantize",      default=1,   min=1, max=#sync.DIV_OPTS, step=1, db=false, cat="Looper", options=sync.DIV_OPTS },
+  { id="looper_quant_feel", name="Quantize Feel", default=1,   min=1, max=3, step=1, db=false, cat="Looper", options=sync.FEEL_OPTS },
 }
+local LOOPER_DEF_B = {}
+for i, e in ipairs(LOOPER_DEF) do
+  local copy = {}
+  for k, v in pairs(e) do copy[k] = v end
+  copy.id  = e.id:gsub("^looper_", "looper2_")
+  copy.cat = "Loop B"
+  LOOPER_DEF_B[i] = copy
+end
+LOOPER_DEF[1].options   = { "BBD", "Cassette", "Tape", "Vinyl" }
+LOOPER_DEF[1].max       = 4
+LOOPER_DEF_B[1].options = { "CD", "Chip" }
+LOOPER_DEF_B[1].max     = 2
+
 local DIR_NAMES = looper_params.DIR_NAMES
 
 local clock_running = true
@@ -38,13 +53,17 @@ local k_clock = {}
 
 local db_to_lin = function(db) return 10 ^ (db / 20) end
 
+local link_on = false
+local function transport_of(L) return (link_on and L == looper_b) and looper_a or L end
+
 -- ── Trigger targets (media subset) ───────────────────────────
--- IIFE keeps the loop counter out of the main chunk (L42 200-local limit).
 local TRIG_TARGETS = (function()
   local t = {
     { label = "Off" },
-    { label = "Looper: Rec",   id = "trig_looper_rec",   action = function() looper.step() end },
-    { label = "Looper: Clear", id = "trig_looper_clear", action = function() looper.force_clear() end },
+    { label = "Loop A: Rec",   id = "trig_looper_rec",    action = function() looper_a.step() end },
+    { label = "Loop A: Clear", id = "trig_looper_clear",  action = function() looper_a.force_clear() end },
+    { label = "Loop B: Rec",   id = "trig_looper2_rec",   action = function() transport_of(looper_b).step() end },
+    { label = "Loop B: Clear", id = "trig_looper2_clear", action = function() transport_of(looper_b).force_clear() end },
   }
   for i = 1, lfo.NUM do
     t[#t + 1] = { label = "LFO " .. i .. ": Randomize", id = "trig_lfo" .. i .. "_randomize", lfo_idx = i,
@@ -58,40 +77,61 @@ local TRIG_TARGETS = (function()
 end)()
 
 -- ── Mod targets (LFO) ────────────────────────────────────────
--- media-specific subset: looper continuous + looper sync + LFO self-targets.
-local TARGET_PARAMS = {
-  {label="Off"},
-  {label="Looper: Rec Level",  id="looper_dub_level",  mn=-40,  mx=0,     st=0.5,  send=function(v) engine.looper_dub_level(db_to_lin(v)) end},
-  {label="Looper: Play Level", id="looper_level",      mn=-40,  mx=0,     st=0.5,  send=function(v) engine.looper_level(db_to_lin(v)) end},
-  {label="Looper: Fade Level", id="looper_fade_level", mn=-40,  mx=0,     st=0.5,  send=function(v) engine.looper_fade_level(db_to_lin(v)) end},
-  {label="Looper: Speed",      id="looper_speed",      mn=-100, mx=100,   st=1,    send=function(v)
-    local ratio
-    if params:get("looper_speed_control") == 1 then
-      if v < 0 then ratio = 0.5 elseif v > 0 then ratio = 2.0 else ratio = 1.0 end
-    else ratio = 2^(v/100) end
-    engine.looper_speed(ratio)
-  end},
-  {label="Looper: Imprint",    id="looper_imprint",    mn=0,    mx=100,   st=1,    send=function(v) engine.looper_imprint(math.floor(v)) end},
-  {label="Looper: Wear",       id="looper_wear",       mn=0,    mx=100,   st=1,    send=function(v) engine.looper_wear(math.floor(v)) end},
-  {label="Looper: Cassette Wow", id="looper_wow_cas",    mn=0,    mx=100,   st=1,    send=function(v) engine.looper_wow_cas(math.floor(v)) end},
-  {label="Looper: CD Errors",  id="looper_cd_errors",  mn=0,    mx=100,   st=1,    send=function(v) engine.looper_cd_errors(math.floor(v)) end},
-  {label="Looper: Chip Crush", id="looper_chip_crush", mn=0,    mx=100,   st=1,    send=function(v) engine.looper_chip_crush(math.floor(v)) end},
-  {label="Looper: Tape Wow",   id="looper_wow_tape",   mn=0,    mx=100,   st=1,    send=function(v) engine.looper_wow_tape(math.floor(v)) end},
-  {label="Looper: Quantize",   id="looper_quant_div",  mn=2,    mx=8,     st=1,    send=function(v)
-    local new_v = math.floor(v+0.5)
-    if lfo.sync_override["looper_quant_div"] ~= new_v then
-      lfo.sync_override["looper_quant_div"] = new_v
-      looper.quant_led_restart()
+local TARGET_PARAMS = (function()
+  local t = { {label = "Off"} }
+  local CONT = {
+    {"Rec Level",     "dub_level",   -40,   0, 0.5, "db"},
+    {"Play Level",    "level",       -40,   0, 0.5, "db"},
+    {"Fade Level",    "fade_level",  -40,   0, 0.5, "db"},
+    {"Speed",         "speed",      -100, 100, 1,   "speed"},
+    {"Imprint",       "imprint",       0, 100, 1,   "int"},
+    {"Wear",          "wear",          0, 100, 1,   "int"},
+    {"Cassette Wow",  "wow_cas",       0, 100, 1,   "int"},
+    {"CD Errors",     "cd_errors",     0, 100, 1,   "int"},
+    {"Chip Crush",    "chip_crush",    0, 100, 1,   "int"},
+    {"Tape Wow",      "wow_tape",      0, 100, 1,   "int"},
+    {"Quantize",      "quant_div",     2, #sync.DIV_OPTS, 1, "sync"},
+    {"Quantize Feel", "quant_feel",    1,   3, 1,   "sync"},
+  }
+  local SIDES = {
+    {n = 1, name = "Loop A", inst = function() return looper_a end},
+    {n = 2, name = "Loop B", inst = function() return looper_b end},
+  }
+  for _, side in ipairs(SIDES) do
+    local pre = (side.n == 1) and "looper_" or ("looper" .. side.n .. "_")
+    for _, c in ipairs(CONT) do
+      local short, suffix, mn, mx, st, kind = c[1], c[2], c[3], c[4], c[5], c[6]
+      local id  = pre .. suffix
+      local cmd = (side.n == 1) and ("looper_" .. suffix)
+                                or  ("looper" .. side.n .. "_" .. suffix)
+      local send
+      if kind == "db" then
+        send = function(v) engine[cmd](db_to_lin(v)) end
+      elseif kind == "int" then
+        send = function(v) engine[cmd](math.floor(v)) end
+      elseif kind == "speed" then
+        send = function(v)
+          local ratio
+          if params:get(pre .. "speed_control") == 1 then
+            if v < 0 then ratio = 0.5 elseif v > 0 then ratio = 2.0 else ratio = 1.0 end
+          else ratio = 2 ^ (v / 100) end
+          engine[cmd](ratio)
+        end
+      else
+        send = function(v)
+          local nv = math.floor(v + 0.5)
+          if lfo.sync_override[id] ~= nv then
+            lfo.sync_override[id] = nv
+            side.inst().quant_led_restart()
+          end
+        end
+      end
+      t[#t + 1] = {label = side.name .. ": " .. short,
+                   id = id, mn = mn, mx = mx, st = st, send = send}
     end
-  end},
-  {label="Looper: Quantize Feel", id="looper_quant_feel", mn=1,    mx=3,     st=1,    send=function(v)
-    local new_v = math.floor(v+0.5)
-    if lfo.sync_override["looper_quant_feel"] ~= new_v then
-      lfo.sync_override["looper_quant_feel"] = new_v
-      looper.quant_led_restart()
-    end
-  end},
-}
+  end
+  return t
+end)()
 
 for i = 1, lfo.NUM do
   TARGET_PARAMS[#TARGET_PARAMS+1] = {label="LFO "..i..": Rate",  id="lfo"..i.."_rate",  mn=0.1, mx=25,  st=0.1, send=function(v) lfo.mod.rate[i]  = v end}
@@ -103,7 +143,7 @@ for i = 1, lfo.NUM do
   TARGET_PARAMS[#TARGET_PARAMS+1] = {label="LFO "..i..": Steps",     id="lfo"..i.."_steps",     mn=1, mx=16,  st=1,   send=function(v) lfo.mod.steps[i]     = math.floor(v + 0.5) end}
   TARGET_PARAMS[#TARGET_PARAMS+1] = {label="LFO "..i..": Stability", id="lfo"..i.."_stability", mn=0, mx=100, st=1,   send=function(v) lfo.mod.stability[i] = v end}
   TARGET_PARAMS[#TARGET_PARAMS+1] = {label="LFO "..i..": Rate Slew", id="lfo"..i.."_rate_slew", mn=0, mx=5,   st=0.1, send=function(v) lfo.mod.rate_slew[i] = v end}
-  TARGET_PARAMS[#TARGET_PARAMS+1] = {label="LFO "..i..": Sync Div",  id="lfo"..i.."_sync_div",  mn=2, mx=8,   st=1,   send=function(v) lfo.mod.sync_div[i]  = math.floor(v + 0.5) end}
+  TARGET_PARAMS[#TARGET_PARAMS+1] = {label="LFO "..i..": Sync Div",  id="lfo"..i.."_sync_div",  mn=2, mx=#sync.DIV_OPTS,   st=1,   send=function(v) lfo.mod.sync_div[i]  = math.floor(v + 0.5) end}
   TARGET_PARAMS[#TARGET_PARAMS+1] = {label="LFO "..i..": Sync Feel", id="lfo"..i.."_sync_feel", mn=1, mx=3,   st=1,   send=function(v) lfo.mod.sync_feel[i] = math.floor(v + 0.5) end}
 end
 
@@ -111,13 +151,15 @@ for i = 1, seq.NUM do
   TARGET_PARAMS[#TARGET_PARAMS+1] = {label="Walk "..i..": Rate",      id="seq"..i.."_rate",      mn=0.1, mx=25,  st=0.1, send=function(v) seq.mod.rate[i]      = v end}
   TARGET_PARAMS[#TARGET_PARAMS+1] = {label="Walk "..i..": Steps",     id="seq"..i.."_steps",     mn=2,   mx=16,  st=1,   send=function(v) seq.mod.steps[i]     = math.floor(v + 0.5) end}
   TARGET_PARAMS[#TARGET_PARAMS+1] = {label="Walk "..i..": Rate Slew", id="seq"..i.."_rate_slew", mn=0,   mx=5,   st=0.1, send=function(v) seq.mod.rate_slew[i] = v end}
-  TARGET_PARAMS[#TARGET_PARAMS+1] = {label="Walk "..i..": Sync Div",  id="seq"..i.."_sync_div",  mn=2,   mx=8,   st=1,   send=function(v) seq.mod.sync_div[i]  = math.floor(v + 0.5) end}
+  TARGET_PARAMS[#TARGET_PARAMS+1] = {label="Walk "..i..": Sync Div",  id="seq"..i.."_sync_div",  mn=2, mx=#sync.DIV_OPTS,   st=1,   send=function(v) seq.mod.sync_div[i]  = math.floor(v + 0.5) end}
   TARGET_PARAMS[#TARGET_PARAMS+1] = {label="Walk "..i..": Sync Feel", id="seq"..i.."_sync_feel", mn=1,   mx=3,   st=1,   send=function(v) seq.mod.sync_feel[i] = math.floor(v + 0.5) end}
 end
 
 for i = 1, trigs.N do
   TARGET_PARAMS[#TARGET_PARAMS+1] = {label="Trigger "..i..": Rate",        id="trig"..i.."_rate",        mn=0.1, mx=25,  st=0.1, send=function(v) trigs.mod.rate[i]        = v end}
   TARGET_PARAMS[#TARGET_PARAMS+1] = {label="Trigger "..i..": Probability", id="trig"..i.."_probability", mn=0,   mx=100, st=1,   send=function(v) trigs.mod.probability[i] = v end}
+  TARGET_PARAMS[#TARGET_PARAMS+1] = {label="Trigger "..i..": Sync Div",    id="trig"..i.."_sync_div",    mn=2,   mx=#sync.DIV_OPTS, st=1, send=function(v) trigs.mod.sync_div[i]  = math.floor(v + 0.5) end}
+  TARGET_PARAMS[#TARGET_PARAMS+1] = {label="Trigger "..i..": Sync Feel",   id="trig"..i.."_sync_feel",   mn=1,   mx=3,   st=1,   send=function(v) trigs.mod.sync_feel[i] = math.floor(v + 0.5) end}
 end
 
 local DEVICE_NAMES     = {}
@@ -144,11 +186,15 @@ for i = 2, #TARGET_PARAMS do
 end
 
 -- ── Mod-rack view state (file scope; populated in init) ──────
-local view           = 0   -- 0 = looper pane, 1 = mod rack
+local view           = 0
+local loop_sel       = 1
+local ui_a, ui_b
+local function cur_looper() return loop_sel == 1 and looper_a or looper_b end
+local function cur_ui()     return loop_sel == 1 and ui_a     or ui_b     end
 local rack_pane      = 1
-local RACK           = {}   -- data-driven source list: {kind=..., idx=...}
-local rack_strip_sel = {}   -- per-source strip selection (keyed for lfo by lfo idx)
-local seq_strip_sel  = {}   -- per-Walk strip selection
+local RACK           = {}
+local rack_strip_sel = {}
+local seq_strip_sel  = {}
 
 -- ── Value formatting ─────────────────────────────────────────
 local function fmt_unit(v, p)
@@ -162,10 +208,12 @@ local function fmt_def_val(def, idx)
   local p  = def[idx]
   local id = p.id
   local v  = params:get(id)
+  local pre  = id:match("^(looper%d*_)") or ""
+  local base = pre ~= "" and ("looper_" .. id:sub(#pre + 1)) or id
   if p.options then return p.options[v] end
-  if id == "looper_direction" then return DIR_NAMES[v] end
-  if id == "looper_speed" then
-    if params:get("looper_speed_control") == 1 then
+  if base == "looper_direction" then return DIR_NAMES[v] end
+  if base == "looper_speed" then
+    if params:get(pre .. "speed_control") == 1 then
       if v < 0 then return "-100%" elseif v > 0 then return "+100%" else return "+0%" end
     else
       return string.format("%+d%%", math.floor(v))
@@ -182,10 +230,9 @@ local function snap_val(v, step)
   else return math.floor(v * 10 + 0.5) / 10 end
 end
 
--- one editing path for the looper pane, mirroring princeton's edit_param;
--- no looper param uses sync.PARAM_MAP, so the sync-division redirect is omitted.
 local PARAM_STEP = {}
-for _, e in ipairs(LOOPER_DEF) do PARAM_STEP[e.id] = e.step end
+for _, e in ipairs(LOOPER_DEF)   do PARAM_STEP[e.id] = e.step end
+for _, e in ipairs(LOOPER_DEF_B) do PARAM_STEP[e.id] = e.step end
 
 local function edit_param(id, d)
   local step = PARAM_STEP[id]
@@ -256,10 +303,11 @@ local function draw_strip(cat, name, val_str, val_lv, val_str2)
 end
 
 local function draw_looper_state_icon()
-  if     looper.state == looper.REC  then draw_icon_record(cabinet.LEFT_CX, cabinet.ICON_Y, B.FULL)
-  elseif looper.state == looper.DUB  then draw_icon_dub(cabinet.LEFT_CX, cabinet.ICON_Y, B.FULL)
-  elseif looper.state == looper.PLAY then draw_icon_play(cabinet.LEFT_CX, cabinet.ICON_Y, B.FULL)
-  elseif looper.state == looper.STOP then draw_icon_stop(cabinet.LEFT_CX, cabinet.ICON_Y, B.MED)
+  local L = cur_looper()
+  if     L.state == L.REC  then draw_icon_record(cabinet.LEFT_CX, cabinet.ICON_Y, B.FULL)
+  elseif L.state == L.DUB  then draw_icon_dub(cabinet.LEFT_CX, cabinet.ICON_Y, B.FULL)
+  elseif L.state == L.PLAY then draw_icon_play(cabinet.LEFT_CX, cabinet.ICON_Y, B.FULL)
+  elseif L.state == L.STOP then draw_icon_stop(cabinet.LEFT_CX, cabinet.ICON_Y, B.MED)
   end
 end
 
@@ -284,12 +332,12 @@ end
 local function setup_clock_watchers()
   clock.transport.start = function()
     clock_running = true
-    looper.quant_led_restart()
+    looper_a.quant_led_restart()
     redraw()
   end
   clock.transport.stop = function()
     clock_running = false
-    looper.quant_led_restart()
+    looper_a.quant_led_restart()
     redraw()
   end
   clock.run(function()
@@ -300,10 +348,10 @@ local function setup_clock_watchers()
       if bpm ~= last_bpm then
         if last_bpm == 0 and bpm > 0 then
           clock_running = true
-          looper.quant_led_restart()
+          looper_a.quant_led_restart()
         elseif bpm == 0 and last_bpm > 0 then
           clock_running = false
-          looper.quant_led_restart()
+          looper_a.quant_led_restart()
         end
         last_bpm = bpm
         redraw()
@@ -334,7 +382,6 @@ local function draw_rack_pane()
   local src_r = RACK[2 * pair]
   local src   = RACK[p]
 
-  -- dispatch on source kind so env/trig can be added in later stages
   if src.kind == "lfo" then
     local lfo_l = src_l and src_l.idx
     local lfo_r = src_r and src_r.idx
@@ -412,7 +459,7 @@ end
 
 -- ── Norns callbacks ──────────────────────────────────────────
 function redraw()
-  if view == 1 then draw_rack_pane() else looper_ui.draw_pane() end
+  if view == 1 then draw_rack_pane() else cur_ui().draw_pane() end
 end
 
 function enc(n, d)
@@ -503,7 +550,12 @@ function enc(n, d)
     end
     return
   end
-  looper_ui.enc(n, d)
+  if n == 1 then
+    local nxt = util.clamp(loop_sel + d, 1, 2)
+    if nxt ~= loop_sel then loop_sel = nxt; redraw() end
+    return
+  end
+  cur_ui().enc(n, d)
 end
 
 function key(n, z)
@@ -516,7 +568,7 @@ function key(n, z)
         if src.kind == "lfo" then params:set("lfo" .. src.idx .. "_randomize", 1)
         elseif src.kind == "seq" then params:set("seq" .. src.idx .. "_randomize", 1) end
       else
-        looper.stop_clear()
+        transport_of(cur_looper()).stop_clear()
       end
     end)
   elseif n == 3 then
@@ -537,13 +589,32 @@ function key(n, z)
           params:set("seq" .. src.idx .. "_enable", 3 - cur)
         end
       else
-        looper.step()
+        transport_of(cur_looper()).step()
       end
     end)
   end
 end
 
 function init()
+  engine.fx_attach()
+  if not params._orig_read then
+    params._orig_read = params.read
+    params.pset_loading = false
+    params.read = function(self, ...)
+      params.pset_loading = true
+      local marked = params.lookup and params.lookup["sync_scheme"]
+      if marked then params:set("sync_scheme", 1) end
+      local ok, err = pcall(params._orig_read, self, ...)
+      if ok and marked and params:get("sync_scheme") < sync.SCHEME then
+        sync.migrate_psets()
+      end
+      if marked then params:set("sync_scheme", sync.SCHEME) end
+      params.pset_loading = false
+      if not ok then error(err) end
+    end
+    params:add_number("sync_scheme", "sync scheme", 1, 9, sync.SCHEME)
+    params:hide("sync_scheme")
+  end
   local function re() if not initing then redraw() end end
 
   -- ── LFO target dropdown helpers (init-local; mirror princeton) ──
@@ -796,12 +867,21 @@ function init()
 
     params:add_option(prefix .. "_sync_div", "Sync", sync.DIV_OPTS, 1)
     params:set_action(prefix .. "_sync_div", function(_)
+      trigs.mod.sync_div[idx] = nil
+      lfo.target_base[prefix .. "_sync_div"] = nil
       refresh_visibility()
-      if not initing then trigs.fn.start_clock(idx) end
+      if not initing then
+        lfo.refresh_dropdowns_for_device("Trigger " .. idx)
+        trigs.fn.start_clock(idx)
+      end
       re()
     end)
 
     params:add_option(prefix .. "_sync_feel", "Sync Feel", sync.FEEL_OPTS, 1)
+    params:set_action(prefix .. "_sync_feel", function(_)
+      trigs.mod.sync_feel[idx] = nil
+      lfo.target_base[prefix .. "_sync_feel"] = nil
+    end)
 
     params:add_separator(prefix .. "_sep_target", "─── Target ───")
 
@@ -960,11 +1040,19 @@ function init()
     end)
   end
 
-  looper.init({
+  looper_a = looper.new({
+    idx              = 1,
     is_clock_running = function() return clock_running end,
     get_override     = function() return lfo.sync_override end,
-    is_pane_visible  = function() return view == 0 end,
+    is_pane_visible  = function() return view == 0 and loop_sel == 1 end,
   })
+  looper_b = looper.new({
+    idx              = 2,
+    is_clock_running = function() return clock_running end,
+    get_override     = function() return lfo.sync_override end,
+    is_pane_visible  = function() return view == 0 and loop_sel == 2 end,
+  })
+  looper_a.on_transition = function(st) if link_on then looper_b.follow(st) end end
 
   lfo.init({
     TARGET_PARAMS    = TARGET_PARAMS,
@@ -975,7 +1063,7 @@ function init()
     is_initing       = function() return initing end,
     on_sync_override_change = function(target_id)
       if target_id == "looper_quant_div" or target_id == "looper_quant_feel" then
-        looper.quant_led_restart()
+        looper_a.quant_led_restart()
       end
     end,
     get_trigs_mod    = function() return trigs.mod end,
@@ -1017,25 +1105,57 @@ function init()
     is_pane_visible  = function() return view == 1 and RACK[rack_pane] and RACK[rack_pane].kind == "seq" end,
     redraw_pane      = function() if not initing then redraw() end end,
   })
-  looper_ui.init({
+  ui_a = looper_ui.new({
     draw_strip      = draw_strip,
     fmt_val         = function(i) return fmt_def_val(LOOPER_DEF, i) end,
     LOOPER_DEF      = LOOPER_DEF,
     val_level       = function(id) return sync.val_level(id, clock_running) end,
     draw_state_icon = draw_looper_state_icon,
     B               = B,
-    looper          = looper,
+    looper          = looper_a,
     LOOPER_PTS      = sprites_looper.LOOPER_PTS,
     edit_param      = edit_param,
+    label           = "Loop A",
+  })
+  ui_b = looper_ui.new({
+    draw_strip      = draw_strip,
+    fmt_val         = function(i) return fmt_def_val(LOOPER_DEF_B, i) end,
+    LOOPER_DEF      = LOOPER_DEF_B,
+    val_level       = function(id) return sync.val_level(id, clock_running) end,
+    draw_state_icon = draw_looper_state_icon,
+    B               = B,
+    looper          = looper_b,
+    LOOPER_PTS      = sprites_looper_b.LOOPER_PTS,
+    edit_param      = edit_param,
+    label           = "Loop B",
   })
   params:add_separator("media_header", "─── MEDIA ───")
+  params:add_group("GUI", 2)
+  params:add_separator("gui_sep_control", "─── Control ───")
+  params:add_binary("gui_init", "Initialize", "trigger", 0)
+  params:set_action("gui_init", function(v)
+    if v ~= 1 or initing then return end
+    local was_loading = params.pset_loading
+    params.pset_loading = true
+    for i = 1, params.count do
+      local p = params.params[i]
+      local t = p.t
+      if t == params.tNUMBER or t == params.tOPTION then
+        params:set(i, p.default)
+      elseif t == params.tCONTROL or t == params.tTAPER then
+        params:set(i, (p.controlspec and p.controlspec.default) or p.default)
+      end
+    end
+    params.pset_loading = was_loading
+    re()
+  end)
   params:add_group("SIGNAL FLOW", 5)
   params:add_separator("signal_flow_sep_control", "─── Control ───")
-  params:add_option("fx_send_a_source", "Send A Source", {"Input", "Looper", "Output"}, 3)
+  params:add_option("fx_send_a_source", "Send A Source", {"Input", "Looper A", "Looper B", "Output"}, 4)
   params:set_action("fx_send_a_source", function(v) engine.fx_send_a_source(v - 1) end)
   params:add_control("fx_send_a_level", "Send A Level", controlspec.new(-60, 10, "lin", 0.5, 0, "dB"))
   params:set_action("fx_send_a_level", function(v) engine.fx_send_a_level(db_to_lin(v)) end)
-  params:add_option("fx_send_b_source", "Send B Source", {"Input", "Looper", "Output"}, 3)
+  params:add_option("fx_send_b_source", "Send B Source", {"Input", "Looper A", "Looper B", "Output"}, 4)
   params:set_action("fx_send_b_source", function(v) engine.fx_send_b_source(v - 1) end)
   params:add_control("fx_send_b_level", "Send B Level", controlspec.new(-60, 10, "lin", 0.5, 0, "dB"))
   params:set_action("fx_send_b_level", function(v) engine.fx_send_b_level(db_to_lin(v)) end)
@@ -1046,11 +1166,37 @@ function init()
     is_initing           = function() return initing end,
     on_quant_div_changed = function() lfo.refresh_dropdowns_for_device("Looper") end,
     speed_is_owned       = function() return lfo.target_owner["looper_speed"] ~= nil end,
-    looper               = looper,
+    looper               = looper_a,
     embedded             = true,
+    group_label          = "LOOPER A",
+    media                = { "BBD", "Cassette", "Tape", "Vinyl" },
+    medium_default       = "Tape",
   })
 
-  -- mod rack groups, in rack order: Sense, LFO, Trigger
+  looper_params.setup({
+    re                   = re,
+    db_to_lin            = db_to_lin,
+    is_initing           = function() return initing end,
+    on_quant_div_changed = function() lfo.refresh_dropdowns_for_device("Looper B") end,
+    speed_is_owned       = function() return lfo.target_owner["looper2_speed"] ~= nil end,
+    looper               = looper_b,
+    embedded             = true,
+    group_label          = "LOOPER B",
+    media                = { "CD", "Chip" },
+    medium_default       = "CD",
+  })
+  params:add_group("LOOPER B ROUTING", 2)
+  params:add_option("looper2_input", "B Input",
+    {"Live", "Looper A", "Live + Looper A"}, 1)
+  params:set_action("looper2_input", function(v) engine.looper_b_input(v - 1); re() end)
+  params:add_option("looper2_link", "B Transport", {"Own", "Follows A"}, 1)
+  params:set_action("looper2_link", function(v)
+    link_on = (v == 2)
+    engine.looper2_link(link_on and 1 or 0)
+    if link_on then looper_b.follow(looper_a.state) end
+    re()
+  end)
+
   local function register_seq(idx)
     local prefix = "seq" .. idx
 

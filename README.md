@@ -2,71 +2,73 @@
 
 ### A medium looper for Monome Norns
 
-media is a standalone Norns looper generated from princeton, sharing its looper code. It carries princeton's looper in full (six storage media, Imprint and Wear, the four playback and four direction modes) and the Mod Rack (eight LFOs, two Sense envelope followers, four Triggers), without the amp, pedalboard, tuner, and metronome. The loop runs on the global Norns clock. The live input is heard through the Norns input monitor; the engine outputs the loop only, and both are summed at the hardware output.
+media is a standalone Norns looper generated from princeton, sharing its looper code. It carries princeton's looper twice: Looper A with the analog media and Looper B with the digital ones, each with Imprint and Wear and the four playback and four direction modes, and the Mod Rack (eight LFOs, two Sense envelope followers, four Triggers), without the amp, pedalboard, tuner, and metronome. The loop runs on the global Norns clock. The live input is heard through the Norns input monitor; the engine outputs the loop only, and both are summed at the hardware output.
 
 ## What it does
 
-The looper is the whole script. Six storage media (BBD, Cassette, CD, Chip, Tape, Vinyl) colour the loop. Imprint sets how much of that colour gets baked in the moment you record; Wear sets how much further the loop erodes on every pass. Four playback modes (Overdub, Overwrite, Sample, Resample) and four direction modes (Forward, Reverse, Pendulum, Random) sit underneath. The Mod Rack drives any looper parameter from LFOs, the two input-following Sense modules, and rhythmic Triggers. Two Norns send buses tap the signal for an external fx mod.
+The looper is the whole script. Six storage media (BBD, Cassette, CD, Chip, Tape, Vinyl) colour the loop. Imprint sets how much of that colour gets baked in the moment you record; Wear sets how much further the loop erodes on every pass. Four playback modes (Overdub, Overwrite, Sample, Resample) and four direction modes (Forward, Reverse, Pendulum, Random) sit underneath. Two loopers run side by side. **Looper A** carries the analog media (BBD, Cassette, Tape, Vinyl), **Looper B** the digital ones (CD, Chip); both play at once, each with its own length, speed and medium. Looper B can record the live input, Looper A's output, or both, so a loop can be copied into a second, differently ageing medium. Linked, Looper B follows Looper A's transport: one press records, plays and clears both, and the two loops start on the same sample and stay locked. The Mod Rack drives any parameter of either looper from LFOs, the two input-following Sense modules, and rhythmic Triggers. Two Norns send buses tap the signal for an external fx mod.
 
 ## Signal flow
 
 ```
-  guitar IN L/R ─┬─► Norns input monitor ─────────────► OUT L/R
-                 │                                        ▲
-                 └─► media engine ──► Looper ─────────────┘
+  guitar IN L/R ─┬─► Norns input monitor ────────────────► OUT L/R
+                 │                                           ▲
+                 └─► media engine ─┬─► Looper A ─────┬───────┤
+                                   │                 │       │
+                                   └─► B Input ◄─────┘       │
+                                         │                   │
+                                         └─► Looper B ───────┘
 
-  Send A and Send B each tap one of three points, scaled by its own level:
-    Input   the raw live input
-    Looper  the looper output on its own
-    Output  the full audible mix (input + loop)
+  B Input picks what Looper B records: Live / Looper A / Live + Looper A
+
+  Send A and Send B each tap one of four points, scaled by its own level:
+    Input     the raw live input
+    Looper A  Looper A's output on its own
+    Looper B  Looper B's output on its own
+    Output    the full audible mix (input + both loops)
 ```
 
-The live input never passes through the engine: Norns monitors it straight to the output, in parallel with the engine's loop output. media therefore has no single internal output signal, so the **Output** send source is reconstructed inside the engine as input plus loop.
+The live input never passes through the engine: Norns monitors it straight to the output, in parallel with the engine's loop output. media therefore has no single internal output signal, so the **Output** send source is reconstructed inside the engine as input plus both loops. Both loopers always reach the output; **B Input** only decides what Looper B records.
 
 ## Controls
+
+![Looper A, playing](docs/img/looper_a.png) ![Looper B, playing](docs/img/looper_b.png)
 
 media has two views, toggled by holding K1. The **Looper view** shows the looper sprite; the **Mod Rack view** shows the LFO, Sense, Walk, and Trigger panes.
 
 | Control | Function |
 |---------|----------|
-| **E1** | Looper view: unused. Mod Rack view: move between rack panes (Sense / LFOs / Walks / Triggers) |
+| **E1** | Looper view: select Looper A or Looper B. Mod Rack view: move between rack panes (Sense / LFOs / Walks / Triggers) |
 | **E2** | Looper view: select looper parameter. Mod Rack view: scroll the focused source's parameter strip |
 | **E3** | Change the selected value |
 | **K1 hold 2s** | Toggle between the Looper view and the Mod Rack view |
 | **K2** | Looper view: stop → clear. Mod Rack view: randomise the focused LFO's register, or a Walk's steps |
 | **K3** | Looper view: record → play → dub → play. Mod Rack view: toggle the focused source on or off |
 
-In the **Looper view**, E2 scrolls the nine strip parameters (Medium, Wear, Direction, Rec / Play / Fade Level, Speed, Quantize, Quantize Feel) and E3 changes the selected one. A small Quant LED in the panel pulses on every Quant subdivision when the Norns clock is running. K2 and K3 keep their transport behaviour here, so you can punch a loop in or out without leaving the sprite.
+In the **Looper view**, E1 picks Looper A or Looper B; the two panes are told apart by their sprites, and E2, E3, K2 and K3 act on the one shown. E2 scrolls the nine strip parameters (Medium, Wear, Direction, Rec / Play / Fade Level, Speed, Quantize, Quantize Feel) and E3 changes the selected one. A small Quant LED in the panel pulses on every Quant subdivision when the Norns clock is running. K2 and K3 keep their transport behaviour here, so you can punch a loop in or out without leaving the sprite.
 
 In the **Mod Rack view**, E1 moves between panes: the first pair shows Sense 1 and Sense 2; the next four pairs show LFO 1/2, 3/4, 5/6, and 7/8; one pair shows Walk 1 and Walk 2; the final two pairs show Trigger 1/2 and Trigger 3/4. E2 scrolls the parameter strip for the focused half; E3 changes the value. Short-press K2 on an LFO pane randomises the focused LFO's Stepped Random register, and on a Walk pane rolls fresh values into its steps. Short-press K3 toggles the focused source on or off. The key holds (K2, K3) do nothing here; K1 hold returns to the Looper view.
 
 ## Parameters
 
-Parameters are listed in PARAMS menu order, under the `─── MEDIA ───` header. The full script list is grouped: SIGNAL FLOW, LOOPER, then the Mod Rack groups (MOD SENSE, MOD LFO, MOD TRIGGER).
+Parameters are listed in PARAMS menu order, under the `─── MEDIA ───` header. The full script list is grouped: SIGNAL FLOW, LOOPER A, LOOPER B, LOOPER B ROUTING, then the Mod Rack groups (MOD SENSE, MOD LFO, MOD WALK, MOD TRIGGER).
 
 ### Signal Flow
 
 | Parameter | Default | Range / Options |
 |-----------|---------|-----------------|
-| **Send A Source** | Output | Input / Looper / Output |
+| **Send A Source** | Output | Input / Looper A / Looper B / Output |
 | **Send A Level** | 0 dB | -60 to +10 dB |
-| **Send B Source** | Output | Input / Looper / Output |
+| **Send B Source** | Output | Input / Looper A / Looper B / Output |
 | **Send B Level** | 0 dB | -60 to +10 dB |
 
-**Send A** and **Send B** route to the two Norns send buses, which a compatible fx mod can read in its send a or send b slot. Each send picks its source independently: **Input** is the raw live input, **Looper** is the looper output on its own, and **Output** is the full audible mix (input plus loop). **Level** scales the send from -60 dB (effectively off) up to +10 dB. Because the input is tapped at unity rather than at the monitor level you actually hear, Output is a faithful sum of both sources but not a bit-exact copy of what leaves OUT L/R. With both sends at their defaults (Output, 0 dB) each carries the full output at unity.
+**Send A** and **Send B** route to the two Norns send buses, which a compatible fx mod can read in its send a or send b slot. Each send picks its source independently: **Input** is the raw live input, **Looper A** and **Looper B** are each looper's output on its own, and **Output** is the full audible mix (input plus both loops). **Level** scales the send from -60 dB (effectively off) up to +10 dB. Because the input is tapped at unity rather than at the monitor level you actually hear, Output is a faithful sum of both sources but not a bit-exact copy of what leaves OUT L/R. With both sends at their defaults (Output, 0 dB) each carries the full output at unity.
 
-**fx mod bus patch (required).** media reads the Norns input bus (`in_b`) directly and relies on the Norns input monitor, so it cannot share that bus. In stock form the fx mod allocates its send buses from the bottom of the audio-bus range, which puts `~sendA` on `in_b`: writing Send A there either leaks the input or silences the looper, so Send A produces no usable send. Since the mod is third-party code, patch it once: in `~/dust/code/<fx-mod>/lib/setup.sc`, inside the `StartUp.add` block, replace the three `Bus.audio(Server.default, numChannels: 2)` allocations for `sendA`, `sendB` and `wet` with top-of-range indices:
-
-```supercollider
-var nb = Server.default.options.numAudioBusChannels;
-sendA = Bus.new(\audio, nb - 6, 2, Server.default);
-sendB = Bus.new(\audio, nb - 4, 2, Server.default);
-wet   = Bus.new(\audio, nb - 2, 2, Server.default);
-```
-
-Crone and every engine allocate from the bottom, so top-of-range indices never collide with `in_b` or `out_b`. This is the same patch documented in the princeton README; apply it once and both scripts route their sends cleanly. Without it, Send B still works (it lands on a free bus), only Send A is affected.
+**fx mod.** The mod is optional, and media adapts to whichever version is installed, no patch needed. Without the mod both sends rest and everything else works as usual. media reads the Norns input bus directly, so a send must never land on it: if a send bus of the mod overlaps the Norns input or output (older versions of the mod put `~sendA` on the input bus), media gives that send a free bus of its own and points the mod's plugins there while media runs, then hands the original back on exit. Each start writes one line per send to the SuperCollider log in maiden saying where it went.
 
 ### Looper
+
+Looper A and Looper B have the same parameter set, in the groups LOOPER A and LOOPER B. They differ only in their media: Looper A offers BBD, Cassette, Tape and Vinyl (default Tape), Looper B offers CD and Chip (default CD).
 
 | Parameter | Default | Range / Options |
 |-----------|---------|-----------------|
@@ -85,6 +87,17 @@ Crone and every engine allocate from the bottom, so top-of-range indices never c
 **Play From** controls what happens when playback resumes after a stop. **Start** always returns to the beginning of the loop. **Cue** resumes from the position where the loop was stopped.
 
 **Mode** selects how dub passes interact with the buffer. **Overdub** layers new material over existing. **Overwrite** replaces it. **Sample** stops after one playback pass; K2 retriggers from the **Play From** position. **Resample** records the loop output back into the buffer including the medium's degradation chain.
+
+### Looper B Routing
+
+| Parameter | Default | Range / Options |
+|-----------|---------|-----------------|
+| **B Input** | Live | Live / Looper A / Live + Looper A |
+| **B Transport** | Own | Own / Follows A |
+
+**B Input** chooses what Looper B records. **Live** records the input, independent of Looper A. **Looper A** records only Looper A's output, so B holds a second copy of A that ages in a digital medium; pull Looper A's Play Level down to hear only that copy, since A's Play Level is also what it sends into B. **Live + Looper A** records both. The setting changes only B's input; both loopers always play to the output.
+
+**B Transport** set to **Follows A** ties Looper B to Looper A's transport: every record, play, dub, stop and clear on A happens on B at the same moment, whether it comes from K2/K3, a trigger or MIDI. The link runs inside the engine: B starts recording and playing on the same sample as A and takes its loop length from A, so the two loops stay locked for as long as they run. A different Speed on B changes how B records and plays, not how long its loop lasts, and each looper keeps its own medium, Wear and Direction. Switching the link on while A is already running brings B to A's state.
 
 **Direction** sets the loop playback direction. **Forward** is conventional. **Reverse** plays the buffer backwards. **Pendulum** alternates forward and reverse at each loop boundary. **Random** flips direction unpredictably at each boundary for generative texture.
 
@@ -133,12 +146,14 @@ Non-destructive read path (M: effects, reversible, never write back)
 
 | Parameter | Default | Range / Options |
 |-----------|---------|-----------------|
-| **Quantize** | Off | Off / 1/1 / 1/2 / 1/4 / 1/8 / 1/16 / 1/32 / 1/64 |
+| **Quantize** | Off | Off / 8/1 / 4/1 / 2/1 / 1/1 / 1/2 / 1/4 / 1/8 / 1/16 / 1/32 / 1/64 |
 | **Quantize Feel** | Note | Note / Dotted / Triplet |
 
 When the Norns clock is running and **Quantize** is set to a division, every K2 transition (record start, record end, play→dub, dub→play, stop) waits for the next beat boundary. **Off** is free-running. See [Synchronization](#synchronization) for how the division and feel combine.
 
 ### Sense
+
+![Mod Rack: Sense 1 and Sense 2](docs/img/mod_sense.png)
 
 Two envelope followers (the **Sense** modules), each with the following parameters:
 
@@ -159,6 +174,8 @@ In the Mod Rack view, each Sense pane shows a live amplitude visualizer with a h
 
 ### Mod Rack
 
+![Mod Rack: LFO 1 and LFO 2](docs/img/mod_lfo.png)
+
 Eight LFOs, each with the following parameters:
 
 | Parameter | Default | Range / Options |
@@ -171,7 +188,7 @@ Eight LFOs, each with the following parameters:
 | **Phase** | 0° | 0° / 90° / 180° / 270° |
 | **Steps** | 8 | 1–16 (Stepped Random only) |
 | **Stability** | 50 % | 0–100 % (Stepped Random only) |
-| **Sync** | Off | Off / 1/1 / 1/2 / 1/4 / 1/8 / 1/16 / 1/32 / 1/64 |
+| **Sync** | Off | Off / 8/1 / 4/1 / 2/1 / 1/1 / 1/2 / 1/4 / 1/8 / 1/16 / 1/32 / 1/64 |
 | **Sync Feel** | Note | Note / Dotted / Triplet (when Sync is active) |
 | **Rate Slew** | 0 s | 0–5 s (non-Step-Random only) |
 | **Target Device** | - | device group |
@@ -184,11 +201,13 @@ Eight LFOs, each with the following parameters:
 
 **Rate** sets the LFO frequency. When **Sync** is set to a division, Rate is derived from the Norns clock (see [Synchronization](#synchronization)), and the Rate strip is replaced with the division name. **Sync Feel** applies the Note/Dotted/Triplet multiplier and is only visible when Sync is active. **Rate Slew** smooths abrupt changes to the LFO rate (for example, when another LFO modulates it); hidden for Stepped Random. **Direction** maps the LFO value to the target range: **+** sweeps from base to base + depth, **-** from base to base − depth, **+/-** symmetrically around the base.
 
-**Target Device** and **Target Param** select what the LFO modulates. The device list is **Looper**, **LFO 1–8**, and **Trigger 1–4**. The Looper device exposes its Rec / Play / Fade levels, Speed, Imprint, Wear, the Cassette Wow / CD Errors / Chip Crush / Tape Wow character controls, and the Quantize division and feel. LFOs can target other LFOs' Rate, Depth, Phase, Steps, Stability, Rate Slew, Sync Division and Sync Feel, and the Triggers' Rate and Probability; routing LFO A into LFO B's rate while LFO B modulates the looper creates compound motion.
+**Target Device** and **Target Param** select what the LFO modulates. The device list is **Loop A**, **Loop B**, **LFO 1–8**, and **Trigger 1–4**. Each looper device exposes its Rec / Play / Fade levels, Speed, Imprint, Wear, the Cassette Wow / CD Errors / Chip Crush / Tape Wow character controls, and the Quantize division and feel. LFOs can target other LFOs' Rate, Depth, Phase, Steps, Stability, Rate Slew, Sync Division and Sync Feel, and the Triggers' Rate, Probability, Sync Division and Sync Feel; routing LFO A into LFO B's rate while LFO B modulates the looper creates compound motion.
 
 The target list adapts to the state of the destination. For another LFO, only the parameters relevant to its current waveform appear: Phase and Rate Slew on the periodic and smooth-random shapes, Steps and Stability on Stepped Random. Rate is hidden once the destination is synced. Sync Division and Sync Feel are exposed as targets only when sync is already active on the destination, so modulation reshapes a sync grid you have already chosen rather than switching sync on or off. A Sync or Quant target can never be moved to **Off** by modulation; only a manual edit can. If a destination changes in a way that retires the current target, the LFO falls back to the first parameter still available.
 
 ### Walk
+
+![Mod Rack: Walk 1 and Walk 2](docs/img/mod_walk.png)
 
 Two step sequencers (the **Walk** modules), each stepping through up to sixteen values and driving a chosen continuous parameter. Each has the following parameters:
 
@@ -198,7 +217,7 @@ Two step sequencers (the **Walk** modules), each stepping through up to sixteen 
 | **Steps** | 16 | 2–16 |
 | **Step 1 … Step 16** | 0 % | −100 – +100 % |
 | **Rate** | 1.0 Hz | 0.1–25 Hz (exp) |
-| **Sync** | Off | Off / 1/1 / 1/2 / 1/4 / 1/8 / 1/16 / 1/32 / 1/64 |
+| **Sync** | Off | Off / 8/1 / 4/1 / 2/1 / 1/1 / 1/2 / 1/4 / 1/8 / 1/16 / 1/32 / 1/64 |
 | **Sync Feel** | Note | Note / Dotted / Triplet (when Sync is active) |
 | **Rate Slew** | 0 s | 0–5 s |
 | **Target Device** | - | device group |
@@ -217,6 +236,8 @@ In the Mod Rack view, the Walk pane shows its steps as a grid of knobs. The play
 
 ### Triggers
 
+![Mod Rack: Trigger 1 and Trigger 2](docs/img/mod_trigger.png)
+
 Four event triggers, each with the following parameters:
 
 | Parameter | Default | Range / Options |
@@ -224,16 +245,16 @@ Four event triggers, each with the following parameters:
 | **Enable** | Off | Off / On |
 | **Probability** | 100 % | 0–100 % |
 | **Rate** | 1.0 Hz | 0.1–25 Hz (exp) |
-| **Sync** | Off | Off / 1/1 / 1/2 / 1/4 / 1/8 / 1/16 / 1/32 / 1/64 |
+| **Sync** | Off | Off / 8/1 / 4/1 / 2/1 / 1/1 / 1/2 / 1/4 / 1/8 / 1/16 / 1/32 / 1/64 |
 | **Sync Feel** | Note | Note / Dotted / Triplet |
 | **Device** | - | device group |
 | **Target** | - | action within device |
 
 Triggers fire at a chosen rate and dispatch a single action per fire. **Probability** acts as a coin gate: 100 % fires every tick, 50 % fires roughly every other, 0 % is silent. **Enable** activates the trigger; while Off, no clock runs and no action fires. **Rate** sets the firing frequency in free mode; when **Sync** is set to a division, Rate is hidden and the rhythm is derived from the Norns clock, with Sync Feel visible alongside.
 
-**Device** and **Target** select what the trigger fires. Devices are **Looper** and **LFO 1–8**. The Looper device exposes two targets: **Rec** advances the looper through its transport order (idle → rec → play → dub → play …, with sample-mode retrig in play), and **Clear** resets the loop unconditionally to idle and empties the buffer. Each LFO device exposes a single **Randomize** target, available only when that LFO is in Stepped Random waveform; outside Stepped Random the target shows `-` and the trigger is a no-op.
+**Device** and **Target** select what the trigger fires. Devices are **Loop A**, **Loop B** and **LFO 1–8**. Each looper device exposes two targets: **Rec** advances the looper through its transport order (idle → rec → play → dub → play …, with sample-mode retrig in play), and **Clear** resets the loop unconditionally to idle and empties the buffer. Each LFO device exposes a single **Randomize** target, available only when that LFO is in Stepped Random waveform; outside Stepped Random the target shows `-` and the trigger is a no-op.
 
-Triggers guard their targets the same way the LFOs and Sense modules do, but in a pool of their own: no two triggers can fire the same action. The trigger pool is independent of the LFO and Sense pool. When a trigger targets `LFO N: Randomize` and is enabled, that LFO's internal Stepped Random clock is suspended and the trigger becomes the only source of new random steps. LFOs can modulate trigger Rate and Probability; the trigger devices appear in the LFO target list as `Trigger 1` through `Trigger 4`.
+Triggers guard their targets the same way the LFOs and Sense modules do, but in a pool of their own: no two triggers can fire the same action. The trigger pool is independent of the LFO and Sense pool. When a trigger targets `LFO N: Randomize` and is enabled, that LFO's internal Stepped Random clock is suspended and the trigger becomes the only source of new random steps. LFOs can modulate trigger Rate and Probability, and, while the trigger is synced, its Sync division and Sync Feel; the trigger devices appear in the LFO target list as `Trigger 1` through `Trigger 4`. Modulating Sync walks a trigger through the clock divisions without leaving the grid: a trigger on Loop A: Rec then cuts loops of changing length that all land on the beat.
 
 ## Synchronization
 
@@ -247,6 +268,9 @@ The conversion is `beats = base_beats × feel_multiplier`, where:
 
 | Division | base_beats |
 |---|---|
+| `8/1` | 32 |
+| `4/1` | 16 |
+| `2/1` | 8 |
 | `1/1` | 4 |
 | `1/2` | 2 |
 | `1/4` | 1 |
@@ -301,4 +325,4 @@ cd ~/dust/code
 git clone https://github.com/notrobintaylor/media
 ```
 
-media is generated from princeton and runs as its own Norns script: it shares the looper, Mod Rack, and DSP modules with princeton, while the host (`media.lua`, `lib/Engine_Media.sc`) is media-specific. The FX sends additionally require the fx mod bus patch described under [Signal Flow](#signal-flow).
+media is generated from princeton and runs as its own Norns script: it shares the looper, Mod Rack, and DSP modules with princeton, while the host (`media.lua`, `lib/Engine_Media.sc`) is media-specific. The FX sends work with any version of the fx mod, see [Signal Flow](#signal-flow).
